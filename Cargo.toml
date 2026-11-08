@@ -7,9 +7,10 @@ edition = "2024"
 
 [dev-dependencies]
 criterion = "0.8.2"
-lazy-regex = "3.6.2"
+real-regex = "2026.10.19"
 regex = "1.13.1"
 regex-filtered = "0.2.1"
+regex-lite = "0.1.9"
 
 [[bench]]
 name = "match"

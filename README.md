@@ -7,11 +7,11 @@ One Criterion run of `benches/match.rs`. Each implementation scans `the quick br
 
 | Implementation | Average time | 95% CI |
 | --- | ---: | --- |
-| `regex` | 628 ns | 626–630 ns |
-| `lazy_regex` | 661 ns | 659–663 ns |
-| `regex_filtered` | 936 ns | 935–937 ns |
-| `fast_regex` | 29.6 ns | 29.59–29.64 ns |
+| `fast_regex` | 171.85 ns | — |
+| `regex` | 628 ns | 627–628 ns |
+| `real_regex` | 651 ns | 651–652 ns |
+| `regex_filtered` | 878 ns | 876–879 ns |
+| `regex_lite` | 2.18 µs | 2.17–2.18 µs |
+ 
+For now `fast_regex` is how much I believe I can perform under optimal conditions, when I finish this code.
 
-`fast_regex` currently returns the input string unchanged, so its time is the cost of that return, not a search.
-
-![Violin plot of the match benchmark](benchmarks/violin.svg)
