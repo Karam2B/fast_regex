@@ -22,7 +22,7 @@ fn compare_match(c: &mut Criterion) {
             all_matches(pattern.find_iter(haystack).map(|m| m.as_str()))
         })
     });
-    group.bench_function("fast_regex", |b| {
+    group.bench_function("ideal_matching", |b| {
         b.iter(|| fast_regex::r#match(std::hint::black_box(input.clone())))
     });
     group.bench_function("real_regex", |b| {
