@@ -11,7 +11,7 @@ use std::{
 
 mod ideal_matching;
 
-pub use ideal_matching::repeat_alphanumeric as r#match;
+pub use ideal_matching::{double_u_one_i, repeat_alphanumeric as r#match};
 
 pub struct CharsIndex<'a> {
     pub chars: Chars<'a>,
@@ -130,10 +130,39 @@ where
     }
 }
 
+impl<N0, N1> WithCharsIndex for Sequence<(Nest<N0>, Nest<N1>)>
+where
+    (Nest<N0>, Nest<N1>): SequentialPeek,
+{
+    fn with_chars_index_shift(&self, chars_index: &mut CharsIndex) -> Control {
+        let mut peek = self.0.default();
+
+        if let Some(_) = self.0.reinit(&mut *chars_index, &mut peek) {
+        } else {
+            return Control::Break;
+        }
+
+        loop {
+            if self.0.matches(&peek) {
+                let shift: usize = self.0.shift(&peek);
+                return Control::Shift(shift);
+            } else {
+                let success = self.0.rotate_move_index(&mut *chars_index, &mut peek);
+
+                if success.is_none() {
+                    break;
+                }
+            }
+        }
+
+        Control::Break
+    }
+}
+
 pub trait SequentialPeek {
     type Peek;
 
-    fn init(&self, ctx: &mut CharsIndex) -> Option<Self::Peek>;
+    fn default(&self) -> Self::Peek;
     fn shift(&self, peek: &Self::Peek) -> usize;
     fn matches(&self, peek: &Self::Peek) -> bool;
     fn reinit(&self, ctx: &mut CharsIndex, peeks: &mut Self::Peek) -> Option<()>;
@@ -144,9 +173,7 @@ pub trait SequentialPeek {
 impl SequentialPeek for () {
     type Peek = ();
 
-    fn init(&self, ctx: &mut CharsIndex) -> Option<Self::Peek> {
-        Some(())
-    }
+    fn default(&self) -> Self::Peek {}
 
     fn shift(&self, peek: &Self::Peek) -> usize {
         0
@@ -171,18 +198,10 @@ where
     R0: SingleCharMatch,
 {
     type Peek = [char; 1];
-    fn init(&self, ctx: &mut CharsIndex) -> Option<Self::Peek> {
+    fn default(&self) -> Self::Peek {
         let mut peek1: [char; 1] = Default::default();
 
-        for i in 0..1usize {
-            if let Some(s) = ctx.chars.next() {
-                peek1[i] = s;
-            } else {
-                return None;
-            }
-        }
-
-        Some(peek1)
+        peek1
     }
     fn shift(&self, peek: &Self::Peek) -> usize {
         peek[0].len_utf8()
@@ -217,18 +236,8 @@ where
     R1: SingleCharMatch,
 {
     type Peek = [char; 2];
-    fn init(&self, ctx: &mut CharsIndex) -> Option<Self::Peek> {
-        let mut peek1: [char; 2] = Default::default();
-
-        for i in 0..2usize {
-            if let Some(s) = ctx.chars.next() {
-                peek1[i] = s;
-            } else {
-                return None;
-            }
-        }
-
-        Some(peek1)
+    fn default(&self) -> Self::Peek {
+        [Default::default(), Default::default()]
     }
 
     fn shift(&self, peek: &Self::Peek) -> usize {
@@ -270,8 +279,8 @@ where
     R0: SequentialPeek,
 {
     type Peek = R0::Peek;
-    fn init(&self, ctx: &mut CharsIndex) -> Option<Self::Peek> {
-        Some(self.0.0.init(&mut *ctx)?)
+    fn default(&self) -> Self::Peek {
+        self.0.0.default()
     }
     fn shift(&self, peek: &Self::Peek) -> usize {
         self.0.0.shift(peek)
@@ -286,7 +295,7 @@ where
         self.0.0.rotate_move_index(ctx, peeks)
     }
     fn rotate(&self, next: char, peek: &mut Self::Peek) -> char {
-        panic!("correct implementation should not call rotate on Nest")
+        self.0.0.rotate(next, peek)
     }
 }
 
@@ -296,9 +305,10 @@ where
     R1: SequentialPeek,
 {
     type Peek = (R0::Peek, R1::Peek);
-    fn init(&self, ctx: &mut CharsIndex) -> Option<Self::Peek> {
-        Some((self.0.0.init(&mut *ctx)?, self.1.0.init(&mut *ctx)?))
+    fn default(&self) -> Self::Peek {
+        (self.0.0.default(), self.1.0.default())
     }
+
     fn shift(&self, peek: &Self::Peek) -> usize {
         self.0.0.shift(&peek.0) + self.1.0.shift(&peek.1)
     }
@@ -326,37 +336,8 @@ where
         Some(())
     }
     fn rotate(&self, next: char, peek: &mut Self::Peek) -> char {
-        panic!("correct implementation should not call rotate on Nest")
-    }
-}
-
-impl<N0, N1> WithCharsIndex for Sequence<(Nest<N0>, Nest<N1>)>
-where
-    // Sequence<N0>: WithCharsIndex,
-    // Sequence<N1>: WithCharsIndex,
-    (Nest<N0>, Nest<N1>): SequentialPeek,
-{
-    fn with_chars_index_shift(&self, chars_index: &mut CharsIndex) -> Control {
-        let mut peek = if let Some(s) = self.0.init(&mut *chars_index) {
-            s
-        } else {
-            return Control::Break;
-        };
-
-        if self.0.matches(&peek) {
-            let shift: usize = self.0.shift(&peek);
-            let _ = self.0.reinit(&mut *chars_index, &mut peek);
-            return Control::Shift(shift);
-        } else {
-            if self
-                .0
-                .rotate_move_index(&mut *chars_index, &mut peek)
-                .is_none()
-            {
-                return Control::Break;
-            }
-            return Control::Continue;
-        }
+        let next = self.1.0.rotate(next, &mut peek.1);
+        self.0.0.rotate(next, &mut peek.0)
     }
 }
 
@@ -426,6 +407,21 @@ mod main_tests {
         let result = regex.find(input);
 
         assert_eq!(result, vec!("uic"));
+
+        let regex = ManyMatches(Sequence((
+            Nest((
+                Nest((Character::<'i'>, Character::<'c'>)),
+                Nest(()), // empty is ok
+            )),
+            Nest((
+                Nest((Character::<'k'>, Character::<' '>)),
+                Nest((Character::<'b'>,)), // one is ok
+            )),
+        )));
+        let input = "the quick brown fox jumps over the lazy dog";
+        let result = regex.find(input);
+
+        assert_eq!(result, vec!("ick b"));
     }
 
     fn main() {
@@ -447,3 +443,5 @@ mod main_tests {
         assert_eq!(s, vec![1, 2, 3]) // enumerate's usize is how many times `next` was called
     }
 }
+
+mod pointer_approch;

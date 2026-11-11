@@ -1,4 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use fast_regex::{Character, ManyMatches, Nest, Sequence};
 use real_regex::Regex as RealRegex;
 use regex::Regex;
 use regex_filtered::Builder;
@@ -50,5 +51,71 @@ fn compare_match(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, compare_match);
+fn compare_uui(c: &mut Criterion) {
+    let input = "the quuick brown fox jumps over the lazy dog".to_string();
+    let pattern = Regex::new("uui").unwrap();
+    let real_pattern = RealRegex::new("uui").unwrap();
+    let lite_pattern = RegexLite::new("uui").unwrap();
+    let filtered = Builder::new().push("uui").unwrap().build().unwrap();
+    let fast = ManyMatches(Sequence((
+        Nest((
+            Nest((Character::<'u'>, Character::<'c'>)),
+            Nest(()), // empty is ok
+        )),
+        Nest((
+            Nest((Character::<'u'>, Character::<' '>)),
+            Nest((Character::<'i'>,)), // one is ok
+        )),
+    )));
+
+    let mut group = c.benchmark_group("uui");
+
+    group.bench_function("ideal_matching", |b| {
+        b.iter(|| {
+            fast_regex::double_u_one_i(std::hint::black_box(&input))
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+    });
+    group.bench_function("fast_regex", |b| {
+        b.iter(|| {
+            fast.find(std::hint::black_box(&input))
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+    });
+    group.bench_function("regex", |b| {
+        b.iter(|| {
+            let haystack = std::hint::black_box(&input);
+            all_matches(pattern.find_iter(haystack).map(|m| m.as_str()))
+        })
+    });
+    group.bench_function("real_regex", |b| {
+        b.iter(|| {
+            let haystack = std::hint::black_box(&input);
+            all_matches(real_pattern.find_iter(haystack).map(|m| m.as_str()))
+        })
+    });
+    group.bench_function("regex_lite", |b| {
+        b.iter(|| {
+            let haystack = std::hint::black_box(&input);
+            all_matches(lite_pattern.find_iter(haystack).map(|m| m.as_str()))
+        })
+    });
+    group.bench_function("regex_filtered", |b| {
+        b.iter(|| {
+            let haystack = std::hint::black_box(&input);
+            filtered
+                .matching(haystack)
+                .flat_map(|(_, re)| re.find_iter(haystack).map(|m| m.as_str()))
+                .map(str::to_string)
+                .collect::<Vec<String>>()
+        })
+    });
+    group.finish();
+}
+
+criterion_group!(benches, compare_match, compare_uui);
 criterion_main!(benches);

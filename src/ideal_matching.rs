@@ -61,7 +61,7 @@ fn double_u_test() {
     assert_eq!(result, vec!["uu"]);
 }
 
-// uui+
+// uui
 pub fn double_u_one_i(str: &str) -> Vec<&str> {
     let mut chars = str.chars();
     let mut result = Vec::new();
@@ -91,6 +91,13 @@ pub fn double_u_one_i(str: &str) -> Vec<&str> {
     }
 
     result
+}
+
+#[test]
+fn double_u_one_i_test() {
+    let input = "the quuick brown fox jumps over the lazy dog";
+    let result = double_u_one_i(input);
+    assert_eq!(result, vec!["uui"]);
 }
 
 /// \w+
