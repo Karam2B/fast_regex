@@ -71,6 +71,10 @@ impl SingleCharMatch for AnyCharacter {
 
 pub struct Nest<T>(pub T);
 
+/// 1. match one
+/// 2. match zero or more
+/// 3. match one or more
+/// 4. match zero or one
 pub struct Sequence<T>(pub T);
 
 impl<R0> WithCharsIndex for Sequence<(R0,)>
@@ -444,4 +448,4 @@ mod main_tests {
     }
 }
 
-mod pointer_approch;
+mod pointer_approach;
