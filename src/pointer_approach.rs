@@ -107,23 +107,17 @@ mod attempt_2 {
     struct Chars<'a> {
         /// The pointer to the next element, or the past-the-end location
         /// if the iterator is empty
-        ptr: NonNull<u8>,
+        next: NonNull<u8>,
 
         /// The non-null pointer to the past-the-end element.
-        end_or_len: *const u8,
+        past_the_end: *const u8,
 
         /// The pointer to the peeked element
-        peek: *const u8,
+        peek_shift: usize,
+        peek_len: usize,
 
-        /// The pointer to the start of the match, if any
-        ///
-        /// this is different from peek because peek can be
-        /// used many times to match a single pattern, ex:
-        /// `h(el)*` this will
-        ///     1. peek `h`
-        ///     2. then `el`, set match_start to Some
-        ///     3. then `el` on repeat
-        match_start: Option<*const u8>,
+        /// next is pointing to the start of the match
+        match_found: bool,
 
         /// Act as a reference `&'a [u8]`
         _marker: PhantomData<&'a u8>,
@@ -135,111 +129,165 @@ mod attempt_2 {
         Failed,
     }
 
-    fn debug_0<'a>(a: &'a str, b: &'a str) {
-        println!("a = {a:?} b = {b:?}");
-    }
-
-    fn debug_one_lt<'a>(a: &mut &'a str, b: &mut &'a str) {
-        println!("a = {a:?} b = {b:?}");
-    }
-    fn debug_two_lt<'a, 'b>(a: &mut &'a str, b: &mut &'b str)
-    where
-        'a: 'b,
-    {
-        // *a = *b; // requires 'b: 'a
-        *b = *a; // requires 'a: 'b
-        println!("a = {a:?} b = {b:?}");
-    }
-
-    fn main() {
-        let mut hello: &'static str = "hello";
-
-        {
-            let world = String::from("world");
-            let mut world = world.as_str(); // 'world has a shorter lifetime than 'static
-            debug_0(hello, world);
-        }
-        {
-            let world = String::from("world");
-            let mut world = world.as_str(); // 'world has a shorter lifetime than 'static
-            debug_one_lt(&mut hello, &mut world);
-        }
-        {
-            let world = String::from("world");
-            let mut world = world.as_str(); // 'world has a shorter lifetime than 'static
-            debug_two_lt(&mut hello, &mut world);
-        }
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct PinnedRange<'a> {
+        pub range: std::ops::Range<usize>,
+        // keep string from being mutated or moved while holding the range
+        pub pinned: PhantomData<&'a u8>,
     }
 
     impl<'a> Chars<'a> {
         pub fn new(str: &'a str) -> Self {
             let search_byte = str.as_bytes();
             let len = search_byte.len();
-            let ptr = NonNull::from_ref(search_byte).cast::<u8>();
-            let peek = ptr.as_ptr();
-            let end_or_len = unsafe { ptr.as_ptr().add(len) };
+            let next = NonNull::from_ref(search_byte).cast::<u8>();
+            let past_the_end = unsafe { next.as_ptr().add(len) };
             Self {
-                ptr,
-                end_or_len,
-                peek,
-                match_start: None,
+                next,
+                past_the_end,
+                peek_shift: 0,
+                peek_len: 0,
+                match_found: false,
                 _marker: PhantomData,
             }
         }
 
         pub fn peek(&mut self, shift: usize) -> OpResult {
-            if shift > unsafe { self.end_or_len.sub(self.peek as usize) as usize } {
+            if self.next.as_ptr() as usize + shift > self.past_the_end as usize {
                 return OpResult::Failed;
             }
 
             unsafe {
-                self.peek = self.peek.add(shift);
+                self.peek_len += shift;
                 OpResult::Success
             }
+        }
+
+        pub fn compare_peeked(&self, pattern_bytes: &[u8]) -> bool {
+            if pattern_bytes.len() != self.peek_len {
+                panic!("pattern bytes length does not match peek length");
+            }
+            let mut count = 0usize;
+            for byte in pattern_bytes.into_iter().rev() {
+                // compare last first
+                if unsafe {
+                    *self
+                        .next
+                        .as_ptr()
+                        .add(self.peek_shift + self.peek_len - count)
+                } != *byte
+                {
+                    return false;
+                }
+                count += 1;
+            }
+
+            true
+        }
+
+        pub fn get_str_from_next_to_peek(&self) -> &'a str {
+            let range = self.get_range_from_next_to_peek();
+
+            let slice: &[u8] =
+                unsafe { std::slice::from_raw_parts(self.next.as_ptr(), range.range.end) };
+
+            let str = unsafe { std::str::from_utf8_unchecked(slice) };
+
+            str
+        }
+
+        pub fn get_range_from_next_to_peek(&self) -> PinnedRange<'a> {
+            PinnedRange {
+                range: 0usize..self.peek_len + self.peek_shift,
+                pinned: PhantomData,
+            }
+        }
+
+        pub fn set_next_to_peek(&mut self) {
+            self.next = unsafe { self.next.add(self.peek_len + self.peek_shift) };
+            self.peek_len = 0;
+            self.peek_shift = 0;
+        }
+
+        pub fn shift_next_forward(&mut self) -> OpResult {
+            if self.next.as_ptr() as usize + 1 > self.past_the_end as usize {
+                return OpResult::Failed;
+            }
+
+            self.next = unsafe { self.next.add(1) };
+            OpResult::Success
         }
     }
 
     #[test]
-    fn match_el() {
+    fn match_el_test() {
         let search = "hello woeld";
+        let result = match_el(search);
+        assert_eq!(
+            result,
+            vec![
+                PinnedRange {
+                    range: 0..2,
+                    pinned: PhantomData
+                },
+                PinnedRange {
+                    range: 2..4,
+                    pinned: PhantomData
+                },
+            ]
+        );
+    }
+
+    fn many_matches_el(search: &str) -> Vec<PinnedRange> {
         let pattern = "el";
-        let mut result: Vec<&str> = Vec::new();
+        let pattern_bytes = pattern.as_bytes();
+        let mut result: Vec<PinnedRange> = Vec::new();
 
         let mut chars = Chars::new(search);
 
         // to search for `el` in `hello woeld`:
 
         // advance the peek 2 letters `peek`
-        // match chars.peek(pattern.len());
+        match chars.peek(pattern.len()) {
+            OpResult::Success => {}
+            OpResult::Failed => {
+                return result;
+            }
+        }
 
         // compare the peeked letters with the pattern (will not match) `view_peeked` or `compare_peeked`
+        loop {
+            let res = chars.compare_peeked(pattern_bytes);
+            if res {
+                // chars.start_match_and_colapse_peek() // before pushing
+                result.push(chars.get_range_from_next_to_peek());
+                chars.set_next_to_peek();
 
-        // advance both the peek and iter 1 letter `shift`,
-        // and check if they match, we know they won't, so will do the same thing one more time
+                let s = 'a: {
+                    break 'a;
+                };
 
-        // if match, will add a match, then advance the peek 2 letters again
+                match chars.peek(pattern.len()) {
+                    OpResult::Success => {}
+                    OpResult::Failed => {
+                        return result;
+                    }
+                }
+            } else {
+                match chars.shift_next_forward() {
+                    OpResult::Success => {}
+                    OpResult::Failed => {
+                        return result;
+                    }
+                }
+            }
+        }
 
-        // shift 4 times, compare again, add another match.
+        //         );
+    }
 
-        // --- done
-
-        // what about this pattern: h(el)*
-        // 1. match h first, if no match shift.
-        // 2. match el one time, if match set global flag to true, if no match colapse peeked, go to step 1.
-        // 3. match el again,
-        //      - if match repeat,
-        //      - if no match and global flag is true, add a match,
-        //      - if no match and global flag is false, this is a bug, you should not progress to this step if flag is false.
-
-        panic!(
-            "what to expect {:?}, {:?}, {:?}, 
-end_ is shift by {:?}
-peek is shift by {:?}",
-            chars.ptr,
-            chars.end_or_len,
-            chars.peek,
-            unsafe { chars.end_or_len.sub(chars.ptr.as_ptr() as usize) as usize },
-            unsafe { chars.peek.sub(chars.ptr.as_ptr() as usize) as usize },
-        );
+    /// `el(o)*`
+    fn many_matches_el_once_o_on_repeat(search: &str) -> Vec<PinnedRange> {
+        todo!()
     }
 }
