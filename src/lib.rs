@@ -12,6 +12,9 @@ use std::{
 mod ideal_matching;
 
 pub use ideal_matching::{double_u_one_i, repeat_alphanumeric as r#match};
+pub use pointer_approach::{
+    many_matches_el, many_on_repeat, many_on_repeat_2, many_on_repeat_3, many_on_repeat_4,
+};
 
 pub struct CharsIndex<'a> {
     pub chars: Chars<'a>,
